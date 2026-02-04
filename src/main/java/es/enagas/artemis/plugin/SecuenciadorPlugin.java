@@ -168,6 +168,7 @@ public class SecuenciadorPlugin implements ActiveMQServerPlugin {
                 // Caso especial: usar JMSTimestamp en vez de una propiedad personalizada
                 if ("JMSTimestamp".equals(secuenciaProperty)) {
                     // Intentar obtener JMSTimestamp usando el método estándar
+                    // Retornar null si el timestamp es 0 o negativo (timestamp no inicializado)
                     long timestamp = coreMessage.getTimestamp();
                     return timestamp > 0 ? timestamp : null;
                 }
