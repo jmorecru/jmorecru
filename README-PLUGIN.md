@@ -40,9 +40,12 @@ El JAR generado se encontrará en `target/artemis-secuenciador-plugin-1.0.0.jar`
 El plugin acepta las siguientes propiedades de configuración:
 
 - **secuenciaProperty** (opcional): Nombre de la propiedad del mensaje que contiene el número de secuencia. Valor por defecto: `secuencia`
+  - Para ordenar por el timestamp JMS estándar, use el valor especial: `JMSTimestamp`
 - **bufferSize** (opcional): Tamaño del buffer de mensajes para reordenamiento. Valor por defecto: `100`
 
 ## Uso
+
+### Ordenamiento por propiedad personalizada
 
 Los mensajes deben incluir una propiedad con el número de secuencia. Ejemplo con un productor Java:
 
@@ -51,6 +54,21 @@ Message message = session.createTextMessage("Contenido del mensaje");
 message.setLongProperty("secuencia", 123);
 producer.send(message);
 ```
+
+### Ordenamiento por JMSTimestamp
+
+Para ordenar mensajes por su timestamp de creación (JMSTimestamp) en lugar de una propiedad personalizada, configure el plugin así:
+
+```xml
+<broker-plugins>
+  <broker-plugin class-name="es.enagas.artemis.plugin.SecuenciadorPlugin">
+    <property key="secuenciaProperty" value="JMSTimestamp"/>
+    <property key="bufferSize" value="100"/>
+  </broker-plugin>
+</broker-plugins>
+```
+
+En este modo, el plugin ordenará automáticamente los mensajes por su timestamp de creación JMS, sin necesidad de propiedades adicionales en los mensajes.
 
 ## Requisitos
 

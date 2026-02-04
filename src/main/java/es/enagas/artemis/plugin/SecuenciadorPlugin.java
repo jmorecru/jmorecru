@@ -21,7 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Plugin de ActiveMQ Artemis que reordena mensajes basándose en una propiedad de secuencia.
  * 
  * Este plugin intercepta los mensajes antes de ser entregados al consumidor y los reordena
- * según el valor de una propiedad personalizada (por defecto "secuencia").
+ * según el valor de una propiedad personalizada (por defecto "secuencia") o el timestamp JMS estándar.
  * 
  * Configuración en broker.xml:
  * <broker-plugins>
@@ -30,6 +30,19 @@ import java.util.concurrent.ConcurrentHashMap;
  *     <property key="bufferSize" value="100"/>
  *   </broker-plugin>
  * </broker-plugins>
+ * 
+ * <p><b>Modo JMSTimestamp:</b></p>
+ * Para ordenar los mensajes usando el header JMS estándar JMSTimestamp en vez de una propiedad
+ * personalizada, configure secuenciaProperty con el valor especial "JMSTimestamp":
+ * <pre>
+ * &lt;broker-plugin class-name="es.enagas.artemis.plugin.SecuenciadorPlugin"&gt;
+ *   &lt;property key="secuenciaProperty" value="JMSTimestamp"/&gt;
+ *   &lt;property key="bufferSize" value="100"/&gt;
+ * &lt;/broker-plugin&gt;
+ * </pre>
+ * 
+ * En este modo, el plugin ordenará los mensajes por su timestamp de creación (JMSTimestamp),
+ * lo cual es útil cuando se desea procesar mensajes en orden cronológico de llegada.
  */
 public class SecuenciadorPlugin implements ActiveMQServerPlugin {
 
@@ -51,7 +64,11 @@ public class SecuenciadorPlugin implements ActiveMQServerPlugin {
         if (properties != null) {
             if (properties.containsKey("secuenciaProperty")) {
                 secuenciaProperty = properties.get("secuenciaProperty");
-                logger.info("Propiedad de secuencia configurada: " + secuenciaProperty);
+                if ("JMSTimestamp".equals(secuenciaProperty)) {
+                    logger.info("Configurado para ordenar por JMSTimestamp (timestamp estándar JMS)");
+                } else {
+                    logger.info("Propiedad de secuencia configurada: " + secuenciaProperty);
+                }
             }
             
             if (properties.containsKey("bufferSize")) {
@@ -139,12 +156,23 @@ public class SecuenciadorPlugin implements ActiveMQServerPlugin {
 
     /**
      * Obtiene el número de secuencia de un mensaje.
+     * Si secuenciaProperty es "JMSTimestamp", retorna el timestamp JMS del mensaje.
+     * De lo contrario, retorna el valor de la propiedad personalizada especificada.
      */
     private Long obtenerSecuencia(MessageReference reference) {
         try {
             Message message = reference.getMessage();
             if (message instanceof ICoreMessage) {
                 ICoreMessage coreMessage = (ICoreMessage) message;
+                
+                // Caso especial: usar JMSTimestamp en vez de una propiedad personalizada
+                if ("JMSTimestamp".equals(secuenciaProperty)) {
+                    // Intentar obtener JMSTimestamp usando el método estándar
+                    long timestamp = coreMessage.getTimestamp();
+                    return timestamp > 0 ? timestamp : null;
+                }
+                
+                // Caso normal: obtener el valor de la propiedad personalizada
                 Object secuencia = coreMessage.getObjectProperty(secuenciaProperty);
                 
                 if (secuencia instanceof Number) {
