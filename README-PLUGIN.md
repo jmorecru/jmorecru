@@ -81,13 +81,19 @@ Usar una única propiedad `queuePairs` con formato CSV `origen:destino,origen:de
 
 Para cada pareja de colas configurada:
 
-1. El plugin intercepta los mensajes de la cola origen
+1. El plugin intercepta los mensajes de la cola origen antes de la entrega al consumidor
 2. Los acumula en un buffer hasta alcanzar el tamaño configurado (`bufferSize`)
 3. Ordena los mensajes por el valor de la propiedad de secuencia (`idSecuencia`)
 4. Limpia el header `HDR_SCHEDULED_DELIVERY_TIME` si existe
 5. Envía los mensajes ordenados atómicamente a la cola destino
+6. Intenta reconocer (acknowledge) los mensajes originales para evitar reentrega
 
 Cada pareja de colas tiene su propio buffer y se procesa de forma independiente.
+
+**Nota Importante sobre Mensajes Origen**: El plugin intercepta mensajes antes de la entrega pero no impide completamente la entrega al consumidor de la cola origen. Los mensajes se copian y envían a la cola destino, y se intenta reconocer el mensaje original. Para un escenario de producción donde se requiere procesamiento exclusivo desde cola destino, considere:
+- No tener consumidores activos en las colas origen
+- Usar las colas origen solo como buffers de reordenamiento
+- Los consumidores deberían conectarse a las colas destino
 
 ## Uso
 

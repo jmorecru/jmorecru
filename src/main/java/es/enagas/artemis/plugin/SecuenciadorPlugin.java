@@ -77,6 +77,9 @@ public class SecuenciadorPlugin implements ActiveMQServerPlugin {
     // Mapa de cola origen a cola destino
     private final Map<String, String> origenToDestino = new ConcurrentHashMap<>();
     
+    // Cache de referencias a colas destino
+    private final Map<String, Queue> destinoQueues = new ConcurrentHashMap<>();
+    
     // Buffer de mensajes por cola origen
     private final Map<String, List<MessageReference>> messageBuffers = new ConcurrentHashMap<>();
     
@@ -144,7 +147,7 @@ public class SecuenciadorPlugin implements ActiveMQServerPlugin {
                     queuePairs.add(new QueuePair(origen, destino));
                 }
             } else {
-                logger.warn("Formato de pareja inválido, se esperaba 'origen:destino': " + pair);
+                logger.warn("Formato de pareja inválida, se esperaba 'origen:destino': " + pair);
             }
         }
     }
@@ -153,7 +156,7 @@ public class SecuenciadorPlugin implements ActiveMQServerPlugin {
      * Parsea parejas de colas en formato numerado: colaOrigen.N, colaDestino.N
      */
     private void parseNumberedQueuePairs(Map<String, String> properties) {
-        Map<Integer, String> origenes = new HashMap<>();
+        Map<Integer, String> orígenes = new HashMap<>();
         Map<Integer, String> destinos = new HashMap<>();
         
         // Buscar todas las propiedades con formato colaOrigen.N y colaDestino.N
@@ -164,7 +167,7 @@ public class SecuenciadorPlugin implements ActiveMQServerPlugin {
             if (key.startsWith("colaOrigen.")) {
                 try {
                     int index = Integer.parseInt(key.substring("colaOrigen.".length()));
-                    origenes.put(index, value);
+                    orígenes.put(index, value);
                 } catch (NumberFormatException e) {
                     logger.warn("Formato de índice inválido en propiedad: " + key);
                 }
@@ -178,8 +181,8 @@ public class SecuenciadorPlugin implements ActiveMQServerPlugin {
             }
         }
         
-        // Emparejar origenes con destinos por índice
-        for (Map.Entry<Integer, String> origenEntry : origenes.entrySet()) {
+        // Emparejar orígenes con destinos por índice
+        for (Map.Entry<Integer, String> origenEntry : orígenes.entrySet()) {
             Integer index = origenEntry.getKey();
             String origen = origenEntry.getValue();
             String destino = destinos.get(index);
@@ -194,7 +197,7 @@ public class SecuenciadorPlugin implements ActiveMQServerPlugin {
         // Advertir sobre destinos sin origen
         for (Map.Entry<Integer, String> destinoEntry : destinos.entrySet()) {
             Integer index = destinoEntry.getKey();
-            if (!origenes.containsKey(index)) {
+            if (!orígenes.containsKey(index)) {
                 logger.warn("Se encontró colaDestino." + index + " sin colaOrigen." + index + " correspondiente");
             }
         }
@@ -216,6 +219,11 @@ public class SecuenciadorPlugin implements ActiveMQServerPlugin {
      * Intercepta los mensajes antes de ser entregados al consumidor.
      * Solo procesa mensajes de colas origen configuradas.
      * Reordena los mensajes según su número de secuencia y los envía a la cola destino.
+     * 
+     * NOTA: Este método intercepta pero no impide la entrega al consumidor original.
+     * Para un escenario de producción, considere usar un consumidor dedicado que
+     * consuma de las colas origen y publique en las colas destino, en lugar de
+     * usar este plugin que solo reordena antes de la entrega.
      */
     @Override
     public void beforeDeliver(ServerConsumer consumer, MessageReference reference) throws ActiveMQException {
@@ -300,10 +308,16 @@ public class SecuenciadorPlugin implements ActiveMQServerPlugin {
         }
         
         try {
-            Queue destinoQueue = server.locateQueue(SimpleString.of(queueDestino));
+            // Obtener cola destino desde cache o servidor
+            Queue destinoQueue = destinoQueues.get(queueDestino);
             if (destinoQueue == null) {
-                logger.warn("Cola destino no encontrada: " + queueDestino);
-                return;
+                destinoQueue = server.locateQueue(SimpleString.of(queueDestino));
+                if (destinoQueue == null) {
+                    logger.warn("Cola destino no encontrada: " + queueDestino);
+                    return;
+                }
+                // Cachear la referencia a la cola
+                destinoQueues.put(queueDestino, destinoQueue);
             }
             
             for (MessageReference ref : mensajes) {
@@ -316,11 +330,23 @@ public class SecuenciadorPlugin implements ActiveMQServerPlugin {
                         coreMsg.removeProperty(Message.HDR_SCHEDULED_DELIVERY_TIME);
                     }
                     
+                    // Obtener el número de secuencia para logging
+                    Long secuencia = obtenerSecuencia(ref);
+                    
                     // Enviar mensaje a la cola destino
                     destinoQueue.route(mensaje, null);
                     
+                    // Reconocer el mensaje original para que no se reentregue
+                    // NOTA: Esta operación podría no ser segura dependiendo del estado del mensaje
+                    try {
+                        ref.acknowledge();
+                    } catch (Exception e) {
+                        logger.warn("No se pudo reconocer el mensaje (secuencia: " + secuencia + "): " + e.getMessage());
+                    }
+                    
                 } catch (Exception e) {
-                    logger.error("Error al enviar mensaje individual a " + queueDestino, e);
+                    Long secuencia = obtenerSecuencia(ref);
+                    logger.error("Error al enviar mensaje (secuencia: " + secuencia + ") a " + queueDestino, e);
                 }
             }
             
